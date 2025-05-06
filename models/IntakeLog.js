@@ -1,6 +1,5 @@
 const pool = require("../config/db");
 
-
 class IntakeLog {
     static async create({ UserId, LogDate }) {
         try {
@@ -39,106 +38,120 @@ class IntakeLog {
         }
     }
 
-    static async findWithMealsAndProducts(UserId, LogDate) {
-        // First get the IntakeLog for specific date
-        const intakeLog = await this.findByUserAndDate(UserId, LogDate);
-        if (!intakeLog) return null;
-
-        // Get all meals associated with this IntakeLog
-        const [meals] = await pool.execute(
-            `SELECT m.*, ihm.MealId, m.MealName, m.MealType, m.CreatedAt
-             FROM IntakeLog_has_Meal ihm
-                      JOIN Meal m ON ihm.MealId = m.MealId
-             WHERE ihm.UserId = ? AND ihm.IntakeLogId = ?`,
-            [UserId, intakeLog.IntakeLogId]
-        );
-
-        // Get products for each meal only for this IntakeLog
-        for (const meal of meals) {
-            const [products] = await pool.execute(
-                `SELECT p.*, mhp.grams
-                 FROM Meal_has_Product mhp
-                          JOIN Product p ON mhp.ProductId = p.ProductId
-                 WHERE mhp.MealId = ?`,
-                [meal.MealId]
+    static async findWithProducts(UserId, LogDate) {
+        const connection = await pool.getConnection();
+        try {
+            // First get the IntakeLog for specific date
+            const [intakeLog] = await connection.execute(
+                'SELECT * FROM IntakeLog WHERE UserId = ? AND LogDate = ?',
+                [UserId, LogDate]
             );
-            meal.products = products.map(product => ({
-                ...product,
-                calories: (product.calories / 100) * product.grams,
-                proteins: (product.proteins / 100) * product.grams,
-                fats: (product.fats / 100) * product.grams,
-                carbohydrates: (product.carbohydrates / 100) * product.grams
-            }));
+
+            if (intakeLog.length === 0) return null;
+
+            // Get all products with their actual grams values AND original product data
+            const [products] = await connection.execute(
+                `SELECT
+                     p.*,
+                     ihp.MealId,
+                     m.MealType,
+                     ihp.MealName,
+                     ihp.grams
+                 FROM IntakeLog_has_Product ihp
+                          JOIN Product p ON ihp.ProductId = p.ProductId
+                          JOIN Meal m ON ihp.MealId = m.MealId
+                 WHERE ihp.IntakeLogId = ?`,
+                [intakeLog[0].IntakeLogId]
+            );
+
+            return {
+                ...intakeLog[0],
+                products: products.map(product => ({
+                    ...product,
+                    // Calculate nutrition based on grams
+                    calculated_calories: (product.calories / 100) * product.grams,
+                    calculated_proteins: (product.proteins / 100) * product.grams,
+                    calculated_fats: (product.fats / 100) * product.grams,
+                    calculated_carbohydrates: (product.carbohydrates / 100) * product.grams
+                }))
+            };
+        } catch (error) {
+            console.error('Error:', error);
+            throw error;
+        } finally {
+            connection.release();
         }
-
-        return {
-            ...intakeLog,
-            meals
-        };
     }
 
-    static async addMealToIntakeLog({ UserId, IntakeLogId, MealId }) {
+    static async addProductToIntakeLog({ IntakeLogId, ProductId, MealId, MealName }) {
         const [result] = await pool.execute(
-            'INSERT INTO IntakeLog_has_Meal (UserId, IntakeLogId, MealId) VALUES (?, ?, ?)',
-            [UserId, IntakeLogId, MealId]
-        );
-        return result.affectedRows > 0;
-    }
-
-    static async addProductToMeal({ MealId, ProductId, grams }) {
-        const [result] = await pool.execute(
-            'INSERT INTO Meal_has_Product (MealId, ProductId, grams) VALUES (?, ?, ?)',
-            [MealId, ProductId, grams]
+            'INSERT INTO IntakeLog_has_Product (IntakeLogId, ProductId, MealId, MealName) VALUES (?, ?, ?, ?)',
+            [IntakeLogId, ProductId, MealId, MealName]
         );
         return result.affectedRows > 0;
     }
 
     static async updateProductsForIntakeLog(IntakeLogId, products, MealId = null) {
-        // If MealId is provided, only update that specific meal
-        if (MealId) {
-            // Delete existing products
-            await pool.execute(
-                'DELETE FROM Meal_has_Product WHERE MealId = ?',
-                [MealId]
-            );
+        const connection = await pool.getConnection();
+        try {
+            await connection.beginTransaction();
 
-            // Add new products
-            for (const product of products) {
-                await this.addProductToMeal({
-                    MealId,
-                    ProductId: product.ProductId,
-                    grams: product.grams
-                });
+            // Ensure products is always an array
+            const productsArray = Array.isArray(products) ? products : [];
+
+            if (MealId) {
+                // Delete existing products for this meal
+                await connection.execute(
+                    'DELETE FROM IntakeLog_has_Product WHERE IntakeLogId = ? AND MealId = ?',
+                    [IntakeLogId, MealId]
+                );
+
+                // Add new products
+                for (const product of productsArray) {
+                    if (product && product.productId) {  // Additional safety check
+                        await connection.execute(
+                            'INSERT INTO IntakeLog_has_Product (IntakeLogId, ProductId, MealId, grams) VALUES (?, ?, ?, ?)',
+                            [
+                                IntakeLogId,
+                                product.productId,
+                                MealId,
+                                product.grams || 100  // Default to 100g if not specified
+                            ]
+                        );
+                    }
+                }
+            } else {
+                // Delete all products for this intake log
+                await connection.execute(
+                    'DELETE FROM IntakeLog_has_Product WHERE IntakeLogId = ?',
+                    [IntakeLogId]
+                );
+
+                // Add new products
+                for (const product of productsArray) {
+                    if (product && product.productId && product.MealId) {  // Additional safety check
+                        await connection.execute(
+                            'INSERT INTO IntakeLog_has_Product (IntakeLogId, ProductId, MealId, grams) VALUES (?, ?, ?, ?)',
+                            [
+                                IntakeLogId,
+                                product.productId,
+                                product.MealId,
+                                product.grams || 100  // Default to 100g if not specified
+                            ]
+                        );
+                    }
+                }
             }
+
+            await connection.commit();
             return true;
+        } catch (error) {
+            await connection.rollback();
+            console.error('Error updating products:', error);
+            throw error;
+        } finally {
+            connection.release();
         }
-
-        // Otherwise update all meals for this intake log (existing behavior)
-        const [meals] = await pool.execute(
-            'SELECT MealId FROM IntakeLog_has_Meal WHERE IntakeLogId = ?',
-            [IntakeLogId]
-        );
-
-        if (meals.length === 0) return false;
-
-        for (const meal of meals) {
-            // Delete existing products
-            await pool.execute(
-                'DELETE FROM Meal_has_Product WHERE MealId = ?',
-                [meal.MealId]
-            );
-
-            // Add new products
-            for (const product of products) {
-                await this.addProductToMeal({
-                    MealId: meal.MealId,
-                    ProductId: product.ProductId,
-                    grams: product.grams
-                });
-            }
-        }
-
-        return true;
     }
 }
 

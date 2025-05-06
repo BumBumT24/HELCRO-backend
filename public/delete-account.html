@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Password Reset</title>
+    <title>Account Deletion</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -73,65 +73,55 @@
             border-radius: 5px;
             text-align: center;
         }
+        
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
     </style>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
 </head>
 <body>
-    <div class="container">
-        <h2>Password Reset</h2>
-        <form id="resetForm">
-            <div class="form-group">
-                <input type="password" id="newPassword" class="input" placeholder="New Password *" required>
-            </div>
-            <div class="form-group">
-                <input type="password" id="confirmPassword" class="input" placeholder="Confirm New Password *" required>
-            </div>
-            <button type="submit" class="button">
-                <i class="fas fa-key button-icon"></i>
-                <span>Reset</span>
-            </button>
-        </form>
-        <div id="message"></div>
-    </div>
+    <h1>Account Deletion</h1>
+    <div id="message" class="message"></div>
 
     <script>
-        document.getElementById('resetForm').addEventListener('submit', async function(e) {
-            e.preventDefault();
-            
-            const newPassword = document.getElementById('newPassword').value;
-            const confirmPassword = document.getElementById('confirmPassword').value;
+        document.addEventListener('DOMContentLoaded', async () => {
             const urlParams = new URLSearchParams(window.location.search);
             const token = urlParams.get('token');
             const messageDiv = document.getElementById('message');
-            
-            messageDiv.textContent = '';
-            messageDiv.className = '';
-            
-            if (newPassword !== confirmPassword) {
-                messageDiv.textContent = 'The passwords do not match.!';
-                messageDiv.className = 'error';
+
+            if (!token) {
+                messageDiv.innerHTML = 'No deletion token provided.<br>Please check your email for the correct link.';
+                messageDiv.className = 'message error';
                 return;
             }
 
             try {
-                const response = await fetch('/reset-password', {
+                const response = await fetch('/api/auth/delete-account', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({ token, newPassword }),
+                    body: JSON.stringify({ token }),
                 });
 
                 const data = await response.json();
-                messageDiv.textContent = data.message || 'The password has been successfully reset!';
-                messageDiv.className = 'success';
-                
-          
-               
-                
+
+                if (data.success) {
+                    messageDiv.textContent = 'Your account has been successfully deleted.';
+                    messageDiv.className = 'message success';
+                } else {
+                    messageDiv.textContent = data.message || 'Failed to delete account.';
+                    messageDiv.className = 'message error';
+                }
             } catch (error) {
-                messageDiv.textContent = 'An error occurred while resetting the password.';
-                messageDiv.className = 'error';
+                messageDiv.textContent = 'An error occurred while processing your request.';
+                messageDiv.className = 'message error';
             }
         });
     </script>
