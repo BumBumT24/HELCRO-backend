@@ -11,7 +11,8 @@ dotenv.config();
 const app = express();
 app.use(cors());
 app.use(express.json());
-const pool = require('./config/db');
+const pool = require("./config/db");
+
 require('dotenv').config();
 const path = require('path');
 
@@ -29,8 +30,7 @@ const db = mysql.createConnection({
     host: process.env.DB_HOST,
     user: process.env.DB_USER,
     password: process.env.DB_PASS,
-    database: process.env.DB_NAME,
-    port: process.env.DB_PORT
+    database: process.env.DB_NAME
 });
 // Konfiguracja mailera
 const transporter = nodemailer.createTransport({
@@ -842,7 +842,7 @@ app.put('/api/users/:userId/avatar', authenticateToken, (req, res) => {
     }
 
     db.query(
-        'UPDATE User SET AvatarImage = ? WHERE UserId = ?',
+        'UPDATE user SET AvatarImage = ? WHERE UserId = ?',
         [avatarUrl, userId],
         (err, result) => {
             if (err) {
